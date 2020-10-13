@@ -46,7 +46,6 @@ var (
 	headers     = flag.String("h", "", "")
 	body        = flag.String("d", "", "")
 	bodyFile    = flag.String("D", "", "")
-	uploadFile  = flag.String("F", "", "")
 	accept      = flag.String("A", "", "")
 	contentType = flag.String("T", "text/html", "")
 	authHeader  = flag.String("a", "", "")
@@ -113,7 +112,11 @@ func main() {
 	var hs headerSlice
 	flag.Var(&hs, "H", "")
 
+	var uploadFiles headerSlice
+	flag.Var(&uploadFiles, "F", "")
+
 	flag.Parse()
+
 	if flag.NArg() < 1 {
 		usageAndExit("")
 	}
@@ -215,33 +218,15 @@ func main() {
 	}
 	header.Set("User-Agent", ua)
 
-	if *uploadFile != "" {
-		// F flag should be like -F "file=@data.txt"
-		ff := strings.SplitN(*uploadFile, "=@", 2)
-		fieldName, fileName := ff[0], ff[1]
-
-		var buf bytes.Buffer
-		w := io.MultiWriter(&buf)
-		mw := multipart.NewWriter(w)
-
-		fw, err := mw.CreateFormFile(fieldName, fileName)
+	if len(uploadFiles) > 0 {
+		contentType, multipartData, err := parseMultipartFormInput(uploadFiles)
 		if err != nil {
 			errAndExit(err.Error())
 		}
-
-		content, err := ioutil.ReadFile(fileName)
-		if err != nil {
-			errAndExit(err.Error())
-		}
-		_, err = fw.Write(content)
-		err = mw.Close()
-		if err != nil {
-			errAndExit(err.Error())
-		}
-		header.Set("Content-Type", mw.FormDataContentType())
-		bodyAll = buf.Bytes()
+		header.Set("Content-Type", contentType)
+		bodyAll = multipartData
 	}
-	
+
 	req.Header = header
 
 	w := &requester.Work{
@@ -309,4 +294,36 @@ func (h *headerSlice) String() string {
 func (h *headerSlice) Set(value string) error {
 	*h = append(*h, value)
 	return nil
+}
+
+func parseMultipartFormInput(uploadFiles []string) (string, []byte, error) {
+	// F flag should be like -F "file=@data.txt"
+	if len(uploadFiles) < 0 {
+		return "", nil, nil
+	}
+	var buf bytes.Buffer
+	w := io.MultiWriter(&buf)
+	mw := multipart.NewWriter(w)
+
+	for _, uploadFile := range uploadFiles {
+		ff := strings.SplitN(uploadFile, "=@", 2)
+		fieldName, fileName := ff[0], ff[1]
+
+		fw, err := mw.CreateFormFile(fieldName, fileName)
+		if err != nil {
+			return "", nil, err
+		}
+
+		content, err := ioutil.ReadFile(fileName)
+		if err != nil {
+			return "", nil, err
+		}
+		_, err = fw.Write(content)
+	}
+	err := mw.Close()
+	if err != nil {
+		return "", nil, err
+	}
+
+	return mw.FormDataContentType(), buf.Bytes(), nil
 }
